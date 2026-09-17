@@ -1,0 +1,122 @@
+"""SQLAlchemy ORM models.
+
+Covers the full data model for the platform (datasets, jobs, model
+registry, predictions). Only the `datasets` table is exercised by Phase 1
+(ingestion); the rest are defined now so the schema is coherent and
+Alembic migrations don't need to be revisited piecemeal, but they're
+populated by later phases (training, inference, monitoring).
+"""
+
+import enum
+import uuid
+from datetime import datetime
+
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class JobType(str, enum.Enum):
+    INGEST = "ingest"
+    TRAIN = "train"
+    BATCH_PREDICT = "batch_predict"
+
+
+class JobStatus(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ModelStage(str, enum.Enum):
+    CANDIDATE = "candidate"
+    PRODUCTION = "production"
+    PREVIOUS = "previous"
+    ARCHIVED = "archived"
+
+
+class Dataset(Base):
+    __tablename__ = "datasets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    schema_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    n_rows: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_columns: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_valid: Mapped[bool] = mapped_column(nullable=False)
+    quality_report: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    model_versions: Mapped[list["ModelVersionRecord"]] = relationship(back_populates="dataset")
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_type: Mapped[JobType] = mapped_column(Enum(JobType, name="job_type"), nullable=False)
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus, name="job_status"), nullable=False, default=JobStatus.QUEUED
+    )
+    celery_task_id: Mapped[str | None] = mapped_column(String(155), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ModelVersionRecord(Base):
+    """Our own model registry table — the source of truth for the
+    candidate/production/previous promotion workflow. MLflow remains the
+    source of truth for run params/metrics/artifacts; this table just
+    references an MLflow run and tracks its business lifecycle stage.
+    """
+
+    __tablename__ = "model_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    version_label: Mapped[str] = mapped_column(String(50), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(100), nullable=False)
+    mlflow_run_id: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    mlflow_experiment_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    artifact_uri: Mapped[str] = mapped_column(String(500), nullable=False)
+    stage: Mapped[ModelStage] = mapped_column(
+        Enum(ModelStage, name="model_stage"), nullable=False, default=ModelStage.CANDIDATE
+    )
+    metrics: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("datasets.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    dataset: Mapped["Dataset"] = relationship(back_populates="model_versions")
+    predictions: Mapped[list["Prediction"]] = relationship(back_populates="model_version")
+
+
+class Prediction(Base):
+    __tablename__ = "predictions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    request_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, default=uuid.uuid4
+    )
+    model_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("model_versions.id"), nullable=False
+    )
+    input_features: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    prediction: Mapped[str] = mapped_column(String(50), nullable=False)
+    probability: Mapped[float] = mapped_column(Float, nullable=False)
+    latency_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    model_version: Mapped["ModelVersionRecord"] = relationship(back_populates="predictions")
