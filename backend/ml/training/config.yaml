@@ -1,0 +1,19 @@
+# Default training configuration for the churn use case.
+# Override any value with an env var (TRAIN_<FIELD_NAME_UPPER>) or by
+# passing a different file via `python -m ml.training.train --config path.yaml`.
+
+test_size: 0.15
+val_size: 0.15
+random_state: 42
+
+logistic_regression_c: 1.0
+logistic_regression_max_iter: 1000
+
+random_forest_n_estimators: 300
+random_forest_max_depth: null
+random_forest_min_samples_leaf: 2
+
+xgboost_n_estimators: 300
+xgboost_max_depth: 5
+xgboost_learning_rate: 0.1
+xgboost_subsample: 0.9

@@ -7,6 +7,7 @@ Kept separate from the router so it's independently unit-testable and so
 the same logic can be reused by a future CLI or batch-ingestion job.
 """
 
+import hashlib
 import io
 import uuid
 from pathlib import Path
@@ -68,6 +69,7 @@ def ingest_csv_upload(
         filename=filename,
         schema_name=schema.name,
         storage_path=str(storage_path),
+        content_hash=hashlib.sha256(raw_bytes).hexdigest(),
         n_rows=report.n_rows,
         n_columns=report.n_columns,
         is_valid=report.is_valid,

@@ -47,6 +47,7 @@ class Dataset(Base):
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     schema_name: Mapped[str] = mapped_column(String(100), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     n_rows: Mapped[int] = mapped_column(Integer, nullable=False)
     n_columns: Mapped[int] = mapped_column(Integer, nullable=False)
     is_valid: Mapped[bool] = mapped_column(nullable=False)
