@@ -27,6 +27,7 @@ class DatasetOut(BaseModel):
     id: uuid.UUID
     filename: str
     schema_name: str
+    content_hash: str
     n_rows: int
     n_columns: int
     is_valid: bool

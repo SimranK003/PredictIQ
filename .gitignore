@@ -17,8 +17,12 @@ htmlcov/
 # ML artifacts
 backend/mlruns/
 backend/mlartifacts/
+backend/mlruns_server/
 *.pkl
 *.joblib
+
+# Uploaded dataset storage (local dev)
+backend/storage/
 
 # Data
 backend/data_seed/*.csv
