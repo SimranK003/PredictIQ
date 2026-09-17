@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# ML artifacts
+backend/mlruns/
+backend/mlartifacts/
+*.pkl
+*.joblib
+
+# Data
+backend/data_seed/*.csv
+!backend/data_seed/.gitkeep
+
+# Node / frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Postgres local data dir (if created)
+infra/pgdata/
