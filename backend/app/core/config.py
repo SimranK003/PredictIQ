@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     model_promotion_required_metrics: str = "precision,recall,f1,roc_auc"
     model_promotion_require_artifact_check: bool = True
 
+    # Inference / batch prediction
+    batch_prediction_sync_max_records: int = 50
+    batch_prediction_max_records: int = 5000
+
+    # Drift foundation (Phase 6 implements the actual comparison) — the
+    # minimum number of real production predictions before we'll even
+    # attempt a distribution summary; below this we report insufficient_data.
+    drift_minimum_predictions: int = 30
+
     # Logging
     log_level: str = "INFO"
 

@@ -27,6 +27,7 @@ class DatasetSchema:
     # be coerced rather than rejected outright (e.g. "TotalCharges" has
     # blank strings for brand-new customers with tenure == 0).
     coercible_numeric_columns: tuple[str, ...] = field(default_factory=tuple)
+    negative_label: str = "No"
 
     @property
     def all_feature_columns(self) -> tuple[str, ...]:

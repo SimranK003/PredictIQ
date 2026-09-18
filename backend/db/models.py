@@ -140,6 +140,14 @@ class ModelVersionRecord(Base):
 
 class Prediction(Base):
     __tablename__ = "predictions"
+    __table_args__ = (
+        # Common query patterns: "predictions for model X, newest first"
+        # (dashboard/history filtering) and "predictions in a date range"
+        # (drift analysis, debugging a specific time window).
+        Index("ix_predictions_model_version_created_at", "model_version_id", "created_at"),
+        Index("ix_predictions_created_at", "created_at"),
+        Index("ix_predictions_request_id", "request_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     request_id: Mapped[uuid.UUID] = mapped_column(
