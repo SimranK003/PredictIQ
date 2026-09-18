@@ -10,7 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", protected_namespaces=()
+    )
 
     environment: str = "development"
 
@@ -33,6 +35,11 @@ class Settings(BaseSettings):
     # Storage
     dataset_storage_dir: str = "storage/datasets"
 
+    # Model promotion policy — see app/services/registry.py. These gate
+    # POST /models/promote; they never trigger promotion automatically.
+    model_promotion_required_metrics: str = "precision,recall,f1,roc_auc"
+    model_promotion_require_artifact_check: bool = True
+
     # Logging
     log_level: str = "INFO"
 
@@ -43,6 +50,10 @@ class Settings(BaseSettings):
     @property
     def is_test(self) -> bool:
         return self.environment == "test"
+
+    @property
+    def model_promotion_required_metrics_list(self) -> list[str]:
+        return [m.strip() for m in self.model_promotion_required_metrics.split(",") if m.strip()]
 
 
 @lru_cache
