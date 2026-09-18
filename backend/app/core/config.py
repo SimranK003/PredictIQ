@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # attempt a distribution summary; below this we report insufficient_data.
     drift_minimum_predictions: int = 30
 
+    # Async training jobs — retries apply only to transient infra errors
+    # (DB/MLflow connectivity), never to deterministic data/training
+    # failures. See app/services/training.py.
+    training_job_max_retries: int = 2
+    training_job_retry_delay_seconds: int = 15
+
     # Logging
     log_level: str = "INFO"
 

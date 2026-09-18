@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
 from db.models import Dataset, ModelStage, ModelVersionRecord
-from db.session import engine
+from db.session import SessionLocal, engine
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -80,6 +80,48 @@ def make_dataset(db_session):
         db_session.add(dataset)
         db_session.flush()
         return dataset
+
+    return _make
+
+
+@pytest.fixture()
+def mlflow_tmp_tracking_env(tmp_path, monkeypatch):
+    """Points MLFLOW_TRACKING_URI at a local file store for the duration
+    of a test, via the same env-var + settings-cache-clear mechanism
+    configure_mlflow() itself reads — so code under test that calls
+    configure_mlflow() (e.g. train_and_register) picks this up instead
+    of needing a live tracking server.
+    """
+    tracking_uri = f"file://{tmp_path}/mlruns"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", tracking_uri)
+    get_settings.cache_clear()
+    yield tracking_uri
+    get_settings.cache_clear()
+
+
+@pytest.fixture()
+def make_real_dataset_file(tmp_path, make_dataset):
+    """Writes a real small CSV to disk and creates a matching Dataset
+    row with the file's actual sha256 — for tests that exercise real
+    training (execute_training_job re-reads and re-hashes the file, so
+    a fixture that fabricates a hash without a real file won't do).
+    """
+    from tests.integration.test_training_pipeline import _synthetic_churn_dataframe
+
+    def _make(*, n_rows: int = 300, seed: int = 5, **overrides) -> Dataset:
+        df = _synthetic_churn_dataframe(n=n_rows, seed=seed)
+        csv_path = tmp_path / f"dataset_{uuid.uuid4().hex}.csv"
+        df.to_csv(csv_path, index=False)
+        content_hash = hashlib.sha256(csv_path.read_bytes()).hexdigest()
+
+        return make_dataset(
+            storage_path=str(csv_path),
+            content_hash=content_hash,
+            n_rows=len(df),
+            n_columns=len(df.columns),
+            is_valid=overrides.pop("is_valid", True),
+            **overrides,
+        )
 
     return _make
 
@@ -195,6 +237,80 @@ def sample_churn_features(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+@pytest.fixture()
+def real_committing_session():
+    """A session on its own real connection whose commits are genuinely
+    durable — needed for tests exercising code that itself calls
+    db.rollback() (execute_training_job's and execute_batch_prediction's
+    failure paths). Inside the shared db_session fixture, an internal
+    rollback would undo the test's own setup too, since nothing there is
+    ever really committed to Postgres until the test ends (see
+    db_session's docstring) — this fixture avoids that by being real.
+    No auto-cleanup: tests using it call cleanup_training_artifacts (or
+    equivalent) explicitly, since what needs deleting varies per test.
+    """
+    session = SessionLocal()
+    yield session
+    session.close()
+
+
+def cleanup_training_artifacts(session, *, job_id=None, dataset_id=None) -> None:
+    """Deletes a real training job's rows in FK-safe order. Shared by
+    tests that create real Dataset/Job/ModelVersionRecord rows via
+    real_committing_session and must clean up after themselves.
+    """
+    from db.models import Job, ModelLifecycleEvent, ModelVersionRecord, Prediction
+
+    if job_id is not None:
+        candidate_ids = [
+            row.id
+            for row in session.query(ModelVersionRecord.id)
+            .filter(ModelVersionRecord.training_job_id == job_id)
+            .all()
+        ]
+        if candidate_ids:
+            session.query(ModelLifecycleEvent).filter(
+                ModelLifecycleEvent.model_version_id.in_(candidate_ids)
+            ).delete(synchronize_session=False)
+            session.query(Prediction).filter(
+                Prediction.model_version_id.in_(candidate_ids)
+            ).delete(synchronize_session=False)
+            session.query(ModelVersionRecord).filter(
+                ModelVersionRecord.id.in_(candidate_ids)
+            ).delete(synchronize_session=False)
+        session.query(Job).filter(Job.id == job_id).delete(synchronize_session=False)
+    if dataset_id is not None:
+        session.query(Dataset).filter(Dataset.id == dataset_id).delete(synchronize_session=False)
+    session.commit()
+
+
+@pytest.fixture()
+def make_training_job(db_session):
+    """Factory for a queued TRAIN Job row, defaulting to a config/
+    algorithm selection that trains fast (small forests, no XGBoost —
+    XGBoost is the slowest of the three on a small synthetic dataset and
+    most job-lifecycle tests don't need all three algorithms to prove
+    their point).
+    """
+    from db.models import Job, JobStatus, JobType
+
+    def _make(*, dataset: Dataset, config: dict | None = None, algorithms=None, **overrides):
+        job = Job(
+            job_type=JobType.TRAIN,
+            status=overrides.get("status", JobStatus.QUEUED),
+            dataset_id=dataset.id,
+            payload={
+                "config": config if config is not None else {"random_forest_n_estimators": 10},
+                "algorithms": algorithms if algorithms is not None else ["logistic_regression"],
+            },
+        )
+        db_session.add(job)
+        db_session.flush()
+        return job
+
+    return _make
 
 
 @pytest.fixture()

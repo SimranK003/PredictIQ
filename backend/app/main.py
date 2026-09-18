@@ -1,6 +1,5 @@
 """FastAPI application entrypoint."""
 
-import mlflow
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -8,7 +7,8 @@ from fastapi.responses import JSONResponse
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
-from app.routers import datasets, health, jobs, models, monitoring, predictions
+from app.core.mlflow_config import assert_mlflow_configured, configure_mlflow
+from app.routers import datasets, health, jobs, models, monitoring, predictions, train
 
 configure_logging()
 settings = get_settings()
@@ -17,7 +17,10 @@ logger = get_logger(__name__)
 # Required so the registry's artifact-existence check and the production
 # model loader actually reach the configured tracking server rather than
 # silently falling back to mlflow's default local ./mlruns file store.
-mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
+# See app/core/mlflow_config.py — every process that talks to MLflow
+# (API, Celery worker, training CLI) calls this at startup.
+configure_mlflow()
+assert_mlflow_configured()
 
 app = FastAPI(
     title="PredictIQ",
@@ -59,3 +62,4 @@ app.include_router(models.router)
 app.include_router(predictions.router)
 app.include_router(jobs.router)
 app.include_router(monitoring.router)
+app.include_router(train.router)

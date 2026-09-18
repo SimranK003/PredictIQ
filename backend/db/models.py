@@ -75,6 +75,12 @@ class Job(Base):
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, name="job_status"), nullable=False, default=JobStatus.QUEUED
     )
+    # Nullable: only TRAIN (and, in principle, a future async INGEST) jobs
+    # have a triggering dataset; BATCH_PREDICT jobs pin a model version
+    # instead (still tracked via payload — see app/routers/predictions.py).
+    dataset_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("datasets.id"), nullable=True
+    )
     celery_task_id: Mapped[str | None] = mapped_column(String(155), nullable=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -82,6 +88,11 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    dataset: Mapped["Dataset | None"] = relationship()
+    model_versions: Mapped[list["ModelVersionRecord"]] = relationship(
+        back_populates="training_job"
+    )
 
 
 class ModelVersionRecord(Base):
@@ -128,10 +139,17 @@ class ModelVersionRecord(Base):
     metrics: Mapped[dict] = mapped_column(JSONB, nullable=False)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False)
     dataset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("datasets.id"), nullable=False)
+    # Nullable: candidates registered by the original CLI training path
+    # (Phase 2, before async training jobs existed) have no Job row —
+    # that's an honest gap, not something to backfill with a fake job.
+    training_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("jobs.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     dataset: Mapped["Dataset"] = relationship(back_populates="model_versions")
+    training_job: Mapped["Job | None"] = relationship(back_populates="model_versions")
     predictions: Mapped[list["Prediction"]] = relationship(back_populates="model_version")
     lifecycle_events: Mapped[list["ModelLifecycleEvent"]] = relationship(
         back_populates="model_version", order_by="ModelLifecycleEvent.created_at"

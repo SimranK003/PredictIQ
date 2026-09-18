@@ -91,12 +91,18 @@ def register_candidate(
     metrics: dict,
     params: dict,
     git_commit: str,
+    training_job_id=None,
 ) -> ModelVersionRecord:
     """Record a finished MLflow run as a new candidate model version.
 
-    This is called automatically at the end of training (ml/training/train.py)
-    — registering a *candidate* is not the same as promoting it, so it's
-    safe to automate: nothing in this function makes the model servable.
+    This is called automatically at the end of training (ml/training/train.py,
+    directly or via the async training Celery task) — registering a
+    *candidate* is not the same as promoting it, so it's safe to
+    automate: nothing in this function makes the model servable.
+
+    training_job_id is nullable: candidates registered by the original
+    CLI training path (Phase 2, before async training jobs existed) have
+    no Job row, which is an honest gap rather than something to backfill.
     """
     model_version = ModelVersionRecord(
         version_label=_next_version_label(db),
@@ -109,6 +115,7 @@ def register_candidate(
         metrics=metrics,
         params=params,
         dataset_id=dataset.id,
+        training_job_id=training_job_id,
     )
     db.add(model_version)
     db.flush()  # assign model_version.id for the event FK

@@ -20,10 +20,11 @@ class ModelVersionOut(BaseModel):
     metrics: dict
     params: dict
     dataset_id: uuid.UUID
+    training_job_id: uuid.UUID | None
     created_at: datetime
     promoted_at: datetime | None
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class ModelVersionSummaryOut(BaseModel):

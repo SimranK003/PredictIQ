@@ -11,20 +11,20 @@ queue with no consumer, and is called out in the API docs/README rather
 than silently pretending async processing happened.
 """
 
-import mlflow
 from celery import Celery
 
 from app.core.config import get_settings
+from app.core.mlflow_config import assert_mlflow_configured, configure_mlflow
 
 settings = get_settings()
 
 # Each process configures mlflow's tracking URI independently (it's
 # process-global state, not shared with the API process) — otherwise
 # this worker silently falls back to a local ./mlruns file store and
-# can't find any real run's artifact. Same class of bug already fixed
-# once in app/main.py; worth fixing here explicitly rather than
-# assuming "it's set somewhere" carries across process boundaries.
-mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
+# can't find any real run's artifact. See app/core/mlflow_config.py —
+# this exact bug was hit here once already (Phase 4) before being fixed.
+configure_mlflow()
+assert_mlflow_configured()
 
 celery_app = Celery(
     "predictiq",
@@ -39,4 +39,13 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    # Celery hijacks the root logger by default (worker_hijack_root_logger
+    # defaults to True), silently discarding our JSON logging setup
+    # (app/core/logging.py) and replacing it with its own plain-text
+    # formatter — found while verifying that structured logs actually
+    # appear in a real worker process, not assumed to work because the
+    # code looked right. False here means Celery leaves the root logger
+    # alone, so configure_logging() (called in workers/tasks.py) is what
+    # actually determines the worker's log format.
+    worker_hijack_root_logger=False,
 )
