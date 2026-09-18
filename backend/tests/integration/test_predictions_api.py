@@ -259,21 +259,6 @@ def test_metrics_endpoint_reflects_real_predictions(client, make_model_version, 
     assert "predictiq_http_request_latency_seconds" in metrics_text
 
 
-def test_monitoring_drift_returns_insufficient_data_below_threshold(
-    client, make_model_version, stub_pipeline
-):
-    make_model_version(stage=ModelStage.PRODUCTION)
-    stub_pipeline(FakePipeline())
-    client.post("/predict", json=sample_churn_features())
-
-    resp = client.get("/monitoring/drift")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "insufficient_data"
-    assert body["n_production_predictions"] == 1
-
-
-def test_monitoring_drift_no_production_model(client):
-    resp = client.get("/monitoring/drift")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "no_production_model"}
+# Drift-specific tests moved to tests/integration/test_monitoring_drift_api.py
+# (Phase 6 — real statistical drift detection superseding the Phase 4
+# descriptive-stats-only foundation).

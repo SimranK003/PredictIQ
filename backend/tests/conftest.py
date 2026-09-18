@@ -314,6 +314,38 @@ def make_training_job(db_session):
 
 
 @pytest.fixture()
+def make_predictions(db_session):
+    """Bulk-creates real Prediction rows tied to a model version, for
+    drift/monitoring tests that need many observations. `feature_fn(i)`
+    generates the input_features dict for row i; `created_at` can
+    backdate all rows for time-window tests (server_default only applies
+    when the column is omitted, so an explicit value here is honored).
+    """
+    from db.models import Prediction
+
+    def _make(model_version, n: int, *, feature_fn=None, created_at=None, prediction="No"):
+        feature_fn = feature_fn or (lambda i: sample_churn_features(tenure=i % 72))
+        rows = []
+        for i in range(n):
+            pred = Prediction(
+                request_id=uuid.uuid4(),
+                model_version_id=model_version.id,
+                input_features=feature_fn(i),
+                prediction=prediction,
+                probability=0.3,
+                latency_ms=5.0,
+            )
+            if created_at is not None:
+                pred.created_at = created_at
+            db_session.add(pred)
+            rows.append(pred)
+        db_session.flush()
+        return rows
+
+    return _make
+
+
+@pytest.fixture()
 def client(db_session, storage_dir) -> TestClient:
     from app.main import app
     from db.session import get_db
