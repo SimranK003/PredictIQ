@@ -115,6 +115,88 @@ def make_model_version(db_session, make_dataset):
     return _make
 
 
+class FakePipeline:
+    """Stand-in for a fitted sklearn Pipeline in tests that exercise our
+    own orchestration (persistence, error handling, metrics) rather than
+    sklearn/MLflow itself, which is already covered in Phase 2/3 tests
+    against real artifacts.
+    """
+
+    def __init__(
+        self,
+        *,
+        positive: bool = True,
+        probability: float | None = None,
+        error: Exception | None = None,
+    ):
+        self.positive = positive
+        self.probability = probability if probability is not None else (0.9 if positive else 0.1)
+        self.error = error
+
+    def predict(self, df):
+        import numpy as np
+
+        if self.error:
+            raise self.error
+        return np.array([1 if self.positive else 0] * len(df))
+
+    def predict_proba(self, df):
+        import numpy as np
+
+        if self.error:
+            raise self.error
+        return np.array([[1 - self.probability, self.probability]] * len(df))
+
+
+@pytest.fixture()
+def stub_pipeline(monkeypatch):
+    """Patch mlflow.sklearn.load_model (used by both the production
+    cache and the pinned-batch loader) to return a FakePipeline, and
+    reset the module-level production cache before/after so tests don't
+    leak a loaded model into each other.
+    """
+    from app.services import model_loader
+
+    model_loader.invalidate_production_model_cache()
+
+    def _stub(pipeline: FakePipeline):
+        monkeypatch.setattr(model_loader.mlflow.sklearn, "load_model", lambda uri: pipeline)
+        return pipeline
+
+    yield _stub
+    model_loader.invalidate_production_model_cache()
+
+
+def sample_churn_features(**overrides) -> dict:
+    """A valid ChurnFeaturesIn-shaped dict, for tests that need a
+    realistic prediction request body without hand-rolling all 19 fields
+    every time.
+    """
+    base = {
+        "gender": "Female",
+        "SeniorCitizen": "0",
+        "Partner": "Yes",
+        "Dependents": "No",
+        "tenure": 2,
+        "PhoneService": "Yes",
+        "MultipleLines": "No",
+        "InternetService": "Fiber optic",
+        "OnlineSecurity": "No",
+        "OnlineBackup": "No",
+        "DeviceProtection": "No",
+        "TechSupport": "No",
+        "StreamingTV": "Yes",
+        "StreamingMovies": "Yes",
+        "Contract": "Month-to-month",
+        "PaperlessBilling": "Yes",
+        "PaymentMethod": "Electronic check",
+        "MonthlyCharges": 95.0,
+        "TotalCharges": 190.0,
+    }
+    base.update(overrides)
+    return base
+
+
 @pytest.fixture()
 def client(db_session, storage_dir) -> TestClient:
     from app.main import app

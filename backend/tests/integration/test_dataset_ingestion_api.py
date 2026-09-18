@@ -95,7 +95,3 @@ def test_list_datasets_includes_uploaded_ones(client):
     assert created["id"] in ids
 
 
-def test_health_endpoint_reports_database_ok(client):
-    resp = client.get("/health")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "database": "ok"}

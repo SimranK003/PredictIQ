@@ -76,3 +76,17 @@ def get_production_pipeline(db: Session) -> tuple[ModelVersionRecord, Any]:
 
 def invalidate_production_model_cache() -> None:
     _cache.invalidate()
+
+
+def load_pipeline_for_model_version(model_version: ModelVersionRecord) -> Any:
+    """Load the pipeline for a *specific* model version, not necessarily
+    the current production one.
+
+    Used for batch jobs: the model version is resolved and pinned once
+    when the job is created, so the entire batch stays attributable to
+    that one version even if a promotion happens while the job is queued
+    or running. Not cached — batch jobs are infrequent enough relative to
+    single predictions that the extra MLflow load per job isn't worth the
+    complexity of a second cache.
+    """
+    return mlflow.sklearn.load_model(model_version.artifact_uri)

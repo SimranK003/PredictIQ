@@ -290,10 +290,10 @@ def _check_dtypes(df: pd.DataFrame, schema: DatasetSchema, issues: list[Validati
 def _check_target_labels(
     df: pd.DataFrame, schema: DatasetSchema, issues: list[ValidationIssue]
 ) -> None:
-    valid_labels = {schema.positive_label, "No"} if schema.positive_label == "Yes" else None
+    valid_labels = {schema.positive_label, schema.negative_label}
     observed = set(df[schema.target_column].dropna().unique().tolist())
 
-    if valid_labels is not None and not observed.issubset(valid_labels):
+    if not observed.issubset(valid_labels):
         unexpected = observed - valid_labels
         issues.append(
             ValidationIssue(
