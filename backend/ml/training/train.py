@@ -24,6 +24,7 @@ from sklearn.pipeline import Pipeline
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.services.registry import register_candidate
 from db.models import Dataset
 from db.session import SessionLocal
 from ml.preprocessing import build_full_pipeline
@@ -46,6 +47,13 @@ class TrainingRunResult:
     n_train: int
     n_val: int
     n_test: int
+
+
+@dataclass
+class MlflowRunHandle:
+    run_id: str
+    experiment_id: str
+    artifact_uri: str
 
 
 def _git_commit() -> str:
@@ -111,8 +119,8 @@ def log_training_run_to_mlflow(
     schema: DatasetSchema,
     config: TrainingConfig,
     sample_input: pd.DataFrame,
-) -> str:
-    """Log one trained pipeline as an MLflow run. Returns the run_id."""
+) -> MlflowRunHandle:
+    """Log one trained pipeline as an MLflow run."""
     with mlflow.start_run(run_name=result.algorithm) as run:
         mlflow.set_tags(
             {
@@ -141,7 +149,11 @@ def log_training_run_to_mlflow(
         mlflow.sklearn.log_model(
             result.pipeline, artifact_path="model", input_example=sample_input
         )
-        return run.info.run_id
+        return MlflowRunHandle(
+            run_id=run.info.run_id,
+            experiment_id=run.info.experiment_id,
+            artifact_uri=f"runs:/{run.info.run_id}/model",
+        )
 
 
 def _load_dataset(dataset_id: str) -> Dataset:
@@ -188,31 +200,57 @@ def main(argv: list[str] | None = None) -> None:
     mlflow.set_experiment(settings.mlflow_experiment_name)
 
     sample_input = df[list(schema.all_feature_columns)].head(3)
+    git_commit = _git_commit()
 
     print("\n" + "=" * 88)
     print(f"Training run — dataset {dataset.id} ({dataset.filename}, {dataset.n_rows} rows)")
     print("=" * 88)
 
-    for result in results:
-        run_id = log_training_run_to_mlflow(
-            result, dataset=dataset, schema=schema, config=config, sample_input=sample_input
-        )
-        tm = result.test_metrics
-        cm = tm["confusion_matrix"]
-        print(f"\n[{result.algorithm}]  mlflow_run_id={run_id}")
-        print(f"  hyperparams: {result.hyperparams}")
-        print(
-            f"  test  -> precision={tm['precision']:.4f} recall={tm['recall']:.4f} "
-            f"f1={tm['f1']:.4f} roc_auc={tm['roc_auc']:.4f} accuracy={tm['accuracy']:.4f}"
-        )
-        print(
-            f"  confusion_matrix -> TN={cm['true_negative']} FP={cm['false_positive']} "
-            f"FN={cm['false_negative']} TP={cm['true_positive']}"
-        )
+    db = SessionLocal()
+    try:
+        for result in results:
+            run_handle = log_training_run_to_mlflow(
+                result, dataset=dataset, schema=schema, config=config, sample_input=sample_input
+            )
+            candidate = register_candidate(
+                db,
+                dataset=dataset,
+                algorithm=result.algorithm,
+                mlflow_run_id=run_handle.run_id,
+                mlflow_experiment_id=run_handle.experiment_id,
+                artifact_uri=run_handle.artifact_uri,
+                metrics=result.test_metrics,
+                params={
+                    **result.hyperparams,
+                    "test_size": config.test_size,
+                    "val_size": config.val_size,
+                    "random_state": config.random_state,
+                },
+                git_commit=git_commit,
+            )
+
+            tm = result.test_metrics
+            cm = tm["confusion_matrix"]
+            print(
+                f"\n[{result.algorithm}]  mlflow_run_id={run_handle.run_id}  "
+                f"registered as {candidate.version_label} (candidate, id={candidate.id})"
+            )
+            print(f"  hyperparams: {result.hyperparams}")
+            print(
+                f"  test  -> precision={tm['precision']:.4f} recall={tm['recall']:.4f} "
+                f"f1={tm['f1']:.4f} roc_auc={tm['roc_auc']:.4f} accuracy={tm['accuracy']:.4f}"
+            )
+            print(
+                f"  confusion_matrix -> TN={cm['true_negative']} FP={cm['false_positive']} "
+                f"FN={cm['false_negative']} TP={cm['true_positive']}"
+            )
+    finally:
+        db.close()
 
     print("\n" + "=" * 88)
     best = max(results, key=lambda r: r.test_metrics["roc_auc"])
     print(f"Best by test ROC-AUC: {best.algorithm} ({best.test_metrics['roc_auc']:.4f})")
+    print("All results registered as candidates. Promote explicitly via POST /models/promote.")
     print("=" * 88 + "\n")
 
 

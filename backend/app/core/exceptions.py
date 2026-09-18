@@ -31,3 +31,21 @@ class DatasetValidationError(PredictIQError):
 
 class NotFoundError(PredictIQError):
     pass
+
+
+class InvalidPromotionError(PredictIQError):
+    """A promotion or rollback request violates the promotion policy or
+    the current lifecycle state (e.g. promoting a non-candidate, rolling
+    back with no previous production model).
+    """
+
+
+class PromotionConflictError(PredictIQError):
+    """A concurrent promotion/rollback raced this one and won.
+
+    Raised when the database's partial unique index rejects a write that
+    would have produced two rows in the same exclusive stage — the
+    application-level checks passed, but another transaction committed
+    first. The caller should surface this as HTTP 409 and let the client
+    retry against the now-current state.
+    """

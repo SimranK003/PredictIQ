@@ -40,11 +40,11 @@ def test_log_training_run_round_trips_through_mlflow(mlflow_tmp_tracking):
     dataset = _FakeDataset()
     sample_input = df[list(CHURN_SCHEMA.all_feature_columns)].head(2)
 
-    run_id = log_training_run_to_mlflow(
+    run_handle = log_training_run_to_mlflow(
         result, dataset=dataset, schema=CHURN_SCHEMA, config=config, sample_input=sample_input
     )
 
-    run = mlflow.get_run(run_id)
+    run = mlflow.get_run(run_handle.run_id)
     assert run.data.tags["algorithm"] == result.algorithm
     assert run.data.tags["dataset_id"] == dataset.id
     assert run.data.tags["dataset_content_hash"] == dataset.content_hash
@@ -53,7 +53,8 @@ def test_log_training_run_round_trips_through_mlflow(mlflow_tmp_tracking):
     assert run.data.metrics["test_roc_auc"] == pytest.approx(result.test_metrics["roc_auc"])
     assert run.data.metrics["val_f1"] == pytest.approx(result.val_metrics["f1"])
 
-    loaded_model = mlflow.sklearn.load_model(f"runs:/{run_id}/model")
+    assert run_handle.artifact_uri == f"runs:/{run_handle.run_id}/model"
+    loaded_model = mlflow.sklearn.load_model(run_handle.artifact_uri)
     reloaded_proba = loaded_model.predict_proba(sample_input)[:, 1]
     original_proba = result.pipeline.predict_proba(sample_input)[:, 1]
 

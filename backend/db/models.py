@@ -11,7 +11,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, func
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, Integer, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -38,6 +38,14 @@ class ModelStage(str, enum.Enum):
     PRODUCTION = "production"
     PREVIOUS = "previous"
     ARCHIVED = "archived"
+
+
+class LifecycleAction(str, enum.Enum):
+    REGISTERED = "registered"
+    PROMOTED = "promoted"
+    DEMOTED_TO_PREVIOUS = "demoted_to_previous"
+    ARCHIVED = "archived"
+    ROLLED_BACK = "rolled_back"
 
 
 class Dataset(Base):
@@ -84,6 +92,28 @@ class ModelVersionRecord(Base):
     """
 
     __tablename__ = "model_versions"
+    __table_args__ = (
+        # DB-enforced invariants, not just application logic: at most one
+        # row can hold each of these two stages at any time. A partial
+        # unique index on a constant-per-row-subset column works because
+        # every row matching the predicate has the same indexed value, so
+        # a second matching row would collide.
+        # NOTE: SQLAlchemy's Enum type stores the Python member *name*
+        # (e.g. "PRODUCTION"), not its .value ("production"), as the
+        # actual Postgres enum label — these predicates must match that.
+        Index(
+            "uq_model_versions_single_production",
+            "stage",
+            unique=True,
+            postgresql_where=text("stage = 'PRODUCTION'"),
+        ),
+        Index(
+            "uq_model_versions_single_previous",
+            "stage",
+            unique=True,
+            postgresql_where=text("stage = 'PREVIOUS'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     version_label: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -91,6 +121,7 @@ class ModelVersionRecord(Base):
     mlflow_run_id: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     mlflow_experiment_id: Mapped[str] = mapped_column(String(100), nullable=False)
     artifact_uri: Mapped[str] = mapped_column(String(500), nullable=False)
+    git_commit: Mapped[str] = mapped_column(String(64), nullable=False)
     stage: Mapped[ModelStage] = mapped_column(
         Enum(ModelStage, name="model_stage"), nullable=False, default=ModelStage.CANDIDATE
     )
@@ -102,6 +133,9 @@ class ModelVersionRecord(Base):
 
     dataset: Mapped["Dataset"] = relationship(back_populates="model_versions")
     predictions: Mapped[list["Prediction"]] = relationship(back_populates="model_version")
+    lifecycle_events: Mapped[list["ModelLifecycleEvent"]] = relationship(
+        back_populates="model_version", order_by="ModelLifecycleEvent.created_at"
+    )
 
 
 class Prediction(Base):
@@ -121,3 +155,35 @@ class Prediction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     model_version: Mapped["ModelVersionRecord"] = relationship(back_populates="predictions")
+
+
+class ModelLifecycleEvent(Base):
+    """Audit trail for model registry lifecycle transitions.
+
+    Deliberately minimal: no actor/user tracking since there's no auth
+    layer yet (`triggered_by` records "system" for training-time
+    registration or "api" for promote/rollback calls). This is enough to
+    answer "what happened to this model version and when," which is what
+    an application-level audit trail needs to do.
+    """
+
+    __tablename__ = "model_lifecycle_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    model_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("model_versions.id"), nullable=False
+    )
+    action: Mapped[LifecycleAction] = mapped_column(
+        Enum(LifecycleAction, name="lifecycle_action"), nullable=False
+    )
+    previous_stage: Mapped[ModelStage | None] = mapped_column(
+        Enum(ModelStage, name="model_stage"), nullable=True
+    )
+    new_stage: Mapped[ModelStage] = mapped_column(
+        Enum(ModelStage, name="model_stage"), nullable=False
+    )
+    triggered_by: Mapped[str] = mapped_column(String(50), nullable=False, default="api")
+    event_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    model_version: Mapped["ModelVersionRecord"] = relationship(back_populates="lifecycle_events")
