@@ -56,3 +56,17 @@ BATCH_PREDICTIONS_TOTAL = Counter(
     "Total POST /predict/batch requests (not individual items)",
     labelnames=("mode",),  # "sync" or "async"
 )
+
+
+def sum_counter_value(counter: Counter) -> float:
+    """Read a Counter's current total across all label combinations,
+    via prometheus_client's public introspection API (.collect()) rather
+    than its private _value attribute — used by monitoring/summary.py to
+    surface real-time totals in JSON without scraping /metrics.
+    """
+    total = 0.0
+    for metric_family in counter.collect():
+        for sample in metric_family.samples:
+            if sample.name.endswith("_total"):
+                total += sample.value
+    return total

@@ -44,10 +44,33 @@ class Settings(BaseSettings):
     batch_prediction_sync_max_records: int = 50
     batch_prediction_max_records: int = 5000
 
-    # Drift foundation (Phase 6 implements the actual comparison) — the
-    # minimum number of real production predictions before we'll even
-    # attempt a distribution summary; below this we report insufficient_data.
-    drift_minimum_predictions: int = 30
+    # Drift detection (see monitoring/drift.py and docs/monitoring.md for
+    # full methodology). These are *operational* thresholds tuned for
+    # this project's scale and traffic, not universal statistical
+    # constants — they gate an alert-worthy signal, not a proof of drift.
+    #
+    # 100 is the conventional "reasonably safe" floor for a two-sample KS
+    # test to have workable power against a moderate shift, and it also
+    # gives PSI's categorical bins (some Telco categories are rare, e.g.
+    # a specific payment method) enough counts each to not be pure noise.
+    # Below it, we report insufficient_data rather than a number that
+    # would fluctuate wildly between requests based on a handful of rows.
+    drift_min_samples: int = 100
+    # KS statistic threshold (numeric features). 0.10 is a commonly used
+    # starting point in industry drift monitoring — not derived from this
+    # project's data — meaning "the two empirical CDFs differ by at least
+    # 10 percentage points at their point of maximum divergence."
+    drift_ks_threshold: float = 0.10
+    # PSI thresholds (categorical features), the standard banding used in
+    # credit-risk/ML-ops literature: <0.10 no significant change, 0.10-
+    # 0.25 moderate ("warning"), >0.25 substantial ("critical"). These are
+    # conventions, not laws of statistics.
+    drift_psi_warning: float = 0.10
+    drift_psi_critical: float = 0.25
+    # Safety cap on how many recent predictions are pulled into memory
+    # for a single drift computation, regardless of how large the
+    # matched sample actually is.
+    drift_max_predictions_sampled: int = 5000
 
     # Async training jobs — retries apply only to transient infra errors
     # (DB/MLflow connectivity), never to deterministic data/training
