@@ -1,0 +1,29 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+.env
+.env.*
+!.env.example
+
+# Local-only ML/data artifacts — never baked into the image; real
+# artifacts live in the mlflow/dataset_storage named volumes instead.
+mlruns/
+mlruns_server/
+mlartifacts/
+storage/
+data_seed/*.csv
+
+tests/
+
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+docker-compose*.yml

@@ -11,12 +11,16 @@ from app.core.exceptions import (
     MalformedCSVError,
     UnsupportedFileTypeError,
 )
+from app.core.security import get_current_user
 from app.schemas.dataset import DatasetOut, DatasetSummaryOut
 from app.services.ingestion import ingest_csv_upload
 from db.models import Dataset
 from db.session import get_db
 
-router = APIRouter(prefix="/datasets", tags=["datasets"])
+# Every dataset endpoint requires an authenticated session — enforced
+# here at the router level (dependencies=[...]) rather than per-endpoint
+# so a new route added later can't accidentally ship unprotected.
+router = APIRouter(prefix="/datasets", tags=["datasets"], dependencies=[Depends(get_current_user)])
 
 
 @router.post("", response_model=DatasetOut, status_code=status.HTTP_201_CREATED)

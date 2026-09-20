@@ -32,8 +32,25 @@ class Settings(BaseSettings):
     api_cors_origins: str = "http://localhost:3000"
     max_upload_size_mb: int = 25
 
-    # Storage
+    # Storage. "local" (default) writes to dataset_storage_dir on the
+    # container's own disk — correct for native dev and Docker Compose,
+    # where backend/worker share one volume (see docker-compose.yml),
+    # but *not* for a cloud deployment where backend and worker are
+    # separate services with no shared disk (Phase 10 — see README's
+    # Production deployment section). "s3" (any S3-compatible endpoint:
+    # AWS S3, Cloudflare R2, MinIO, ...) is the production alternative;
+    # credentials are never read from Settings — boto3's own default
+    # chain picks up AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY from the
+    # environment, so they're never at risk of being logged alongside
+    # ordinary config.
     dataset_storage_dir: str = "storage/datasets"
+    dataset_storage_backend: str = "local"
+    dataset_storage_s3_bucket: str = ""
+    dataset_storage_s3_prefix: str = "datasets"
+    dataset_storage_s3_region: str = ""
+    # Only needed for a non-AWS S3-compatible endpoint (R2, MinIO); leave
+    # unset for real AWS S3.
+    dataset_storage_s3_endpoint_url: str = ""
 
     # Model promotion policy — see app/services/registry.py. These gate
     # POST /models/promote; they never trigger promotion automatically.
@@ -80,6 +97,43 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
+
+    # Authentication (Phase 9). Session tokens are opaque, stored
+    # server-side in Redis (app/services/auth.py) — this key only signs
+    # the cookie itself (HMAC, see app/core/security.py) so a tampered
+    # cookie value is rejected before ever touching Redis or the
+    # database. The default below is an obvious placeholder, not a real
+    # secret — it must be overridden via SECRET_KEY for anything beyond
+    # a throwaway local instance (see README's Docker/local setup).
+    secret_key: str = "dev-insecure-secret-key-change-me"
+    session_cookie_name: str = "predictiq_session"
+    # 8 hours: long enough for a normal working session, short enough
+    # that a stolen/forgotten cookie doesn't stay valid indefinitely.
+    session_ttl_seconds: int = 8 * 60 * 60
+    # False by default so local HTTP dev (native and Docker) actually
+    # gets the cookie back on the next request — browsers/HTTP clients
+    # drop a Secure cookie set over plain HTTP. Must be true wherever
+    # the app is actually served over HTTPS.
+    session_cookie_secure: bool = False
+    session_cookie_samesite: str = "lax"
+
+    # Login rate limiting (Redis-backed fixed window, see
+    # app/services/auth.py) — protects against obvious brute-force
+    # password guessing without adding new infrastructure.
+    login_rate_limit_max_attempts: int = 5
+    login_rate_limit_window_seconds: int = 300
+    # False by default: native dev and Docker Compose have no reverse
+    # proxy in front of the backend, so request.client.host is already
+    # the real peer address — trusting a client-supplied
+    # X-Forwarded-For header there would let a client forge it to dodge
+    # the login rate limiter entirely. Render (Phase 10 production
+    # deployment — see render.yaml) always proxies every request
+    # through its own edge, making the backend unreachable except via
+    # that proxy, which *does* set X-Forwarded-For to the real client
+    # IP — render.yaml sets this to true specifically because that
+    # precondition holds there. Do not set this to true unless you can
+    # make the same guarantee for wherever you're deploying.
+    trust_proxy_headers: bool = False
 
     @property
     def cors_origins_list(self) -> list[str]:

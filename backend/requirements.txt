@@ -1,9 +1,17 @@
+# Runtime dependencies only — installed into every image (backend,
+# worker, migrate) that actually runs the application. Test/lint
+# tooling lives in requirements-dev.txt instead (see that file's
+# header) so pytest/ruff never ship inside the production image (Phase
+# 10 hardening — a stray dev dependency's CVE shouldn't count against
+# the deployed container, and it's dead weight in image size either
+# way). `pip install -r requirements-dev.txt` pulls this file in too.
+
 # --- Web / API ---
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.9.2
 pydantic-settings==2.5.2
-python-multipart==0.0.9
+python-multipart==0.0.32
 
 # --- Database ---
 sqlalchemy==2.0.35
@@ -27,12 +35,15 @@ pyyaml==6.0.2
 # --- Monitoring ---
 prometheus-client==0.20.0
 
+# --- Auth ---
+argon2-cffi==25.1.0
+
+# --- Object storage (Phase 10 production dataset storage; see
+# app/services/dataset_storage.py). Only imported when
+# DATASET_STORAGE_BACKEND=s3 — native/Docker Compose dev never touches
+# this code path, but it's a real dependency of the image either way. ---
+boto3==1.43.98
+
 # --- Utilities ---
 python-json-logger==2.0.7
 httpx==0.27.2
-
-# --- Dev / Test ---
-pytest==8.3.3
-pytest-cov==5.0.0
-pytest-env==1.1.5
-ruff==0.6.9

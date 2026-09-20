@@ -6,6 +6,7 @@
  */
 
 import type {
+  AuthUser,
   DriftReport,
   HealthStatus,
   Job,
@@ -67,6 +68,12 @@ async function request<T>(
         "Content-Type": "application/json",
         ...init?.headers,
       },
+      // The session cookie (HttpOnly, set by POST /auth/login) is on a
+      // different origin from the frontend whenever ports differ, so it
+      // won't be sent/stored without this — the backend's CORS config
+      // (allow_credentials=True with an explicit origin allowlist, never
+      // "*") is the other half of making that work.
+      credentials: "include",
       signal: controller.signal,
     });
   } catch (error) {
@@ -119,6 +126,15 @@ function buildQuery(params: Record<string, string | number | undefined | null>):
 export const api = {
   // --- Health ---
   getHealth: () => request<HealthStatus>("/health"),
+
+  // --- Auth ---
+  login: (email: string, password: string) =>
+    request<AuthUser>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+  getMe: () => request<AuthUser>("/auth/me"),
 
   // --- Models ---
   listModels: (stage?: string) =>

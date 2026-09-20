@@ -4,6 +4,7 @@
  */
 export const queryKeys = {
   health: ["health"] as const,
+  currentUser: ["auth", "me"] as const,
   models: (stage?: string) => ["models", stage ?? "all"] as const,
   model: (id: string) => ["models", id] as const,
   productionModel: ["models", "production"] as const,

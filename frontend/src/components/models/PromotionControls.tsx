@@ -6,13 +6,22 @@ import { api, ApiError } from "@/lib/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { formatPercent } from "@/lib/format";
+import { useAuth } from "@/components/auth/AuthProvider";
 import type { ModelVersionDetail } from "@/lib/types";
 
 /** Promote/rollback both require an explicit confirmation showing what
  * will change — current production vs. the candidate's own metrics,
- * dataset, and training job — never a one-click destructive action. */
+ * dataset, and training job — never a one-click destructive action.
+ *
+ * Both actions are admin-only on the backend (POST /models/promote and
+ * /models/rollback require require_admin — see app/routers/models.py)
+ * regardless of what this component renders; hiding the buttons for a
+ * non-admin here is a UX nicety, not the security boundary, since a
+ * hidden button doesn't stop a direct API call.
+ */
 export function PromotionControls({ model }: { model: ModelVersionDetail }) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [promoteOpen, setPromoteOpen] = useState(false);
   const [rollbackOpen, setRollbackOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -51,6 +60,10 @@ export function PromotionControls({ model }: { model: ModelVersionDetail }) {
       setActionError(error instanceof ApiError ? error.message : "Rollback failed.");
     },
   });
+
+  if (!user?.is_admin) {
+    return null;
+  }
 
   return (
     <div className="flex flex-col gap-2">

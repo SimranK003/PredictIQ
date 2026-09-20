@@ -140,6 +140,14 @@ export interface PaginatedPredictions {
   offset: number;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  is_admin: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
 export interface HealthStatus {
   status: "ok" | "degraded" | "unhealthy";
   database: "ok" | "unavailable";

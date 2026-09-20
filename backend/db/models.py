@@ -11,7 +11,18 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -46,6 +57,28 @@ class LifecycleAction(str, enum.Enum):
     DEMOTED_TO_PREVIOUS = "demoted_to_previous"
     ARCHIVED = "archived"
     ROLLED_BACK = "rolled_back"
+
+
+class User(Base):
+    """Phase 9 authentication. Deliberately minimal: no roles table, no
+    profile fields, no self-registration — just enough to distinguish an
+    authenticated user from an administrator (see app/core/security.py's
+    require_admin). `hashed_password` is always an Argon2id hash
+    (app/core/security.py's hash_password/verify_password) — the raw
+    password is never stored or logged anywhere. Session state itself
+    lives in Redis, not a DB table (see app/services/auth.py) — this
+    table is only ever the identity/credential record.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Dataset(Base):
@@ -186,11 +219,13 @@ class Prediction(Base):
 class ModelLifecycleEvent(Base):
     """Audit trail for model registry lifecycle transitions.
 
-    Deliberately minimal: no actor/user tracking since there's no auth
-    layer yet (`triggered_by` records "system" for training-time
-    registration or "api" for promote/rollback calls). This is enough to
-    answer "what happened to this model version and when," which is what
-    an application-level audit trail needs to do.
+    `triggered_by` records "system" for training-time registration
+    (nothing promotes itself, so there's no user to attribute that to)
+    and, since Phase 9, the acting administrator's email for promote/
+    rollback (app/routers/models.py) — both of which now require
+    require_admin. No separate actor foreign key: the string is enough
+    to answer "what happened to this model version, when, and by whom,"
+    without this table needing to track user deletion/renaming.
     """
 
     __tablename__ = "model_lifecycle_events"
@@ -208,7 +243,7 @@ class ModelLifecycleEvent(Base):
     new_stage: Mapped[ModelStage] = mapped_column(
         Enum(ModelStage, name="model_stage"), nullable=False
     )
-    triggered_by: Mapped[str] = mapped_column(String(50), nullable=False, default="api")
+    triggered_by: Mapped[str] = mapped_column(String(255), nullable=False, default="api")
     event_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

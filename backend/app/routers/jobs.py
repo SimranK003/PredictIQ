@@ -11,11 +11,12 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.core.security import get_current_user
 from app.schemas.job import JobOut, PaginatedJobsOut
 from db.models import Job, JobStatus, JobType, ModelVersionRecord
 from db.session import get_db
 
-router = APIRouter(prefix="/jobs", tags=["jobs"])
+router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(get_current_user)])
 
 
 def _build_job_out(db: Session, job: Job) -> JobOut:
