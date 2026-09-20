@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.exceptions import NotFoundError
 from app.core.middleware import get_request_id
+from app.core.security import get_current_user
 from app.schemas.prediction import (
     BatchPredictionRequest,
     BatchPredictionResponse,
@@ -27,7 +28,7 @@ from db.models import Job, JobStatus, JobType, ModelVersionRecord, Prediction
 from db.session import get_db
 from monitoring.metrics import BATCH_PREDICTIONS_TOTAL
 
-router = APIRouter(tags=["predictions"])
+router = APIRouter(tags=["predictions"], dependencies=[Depends(get_current_user)])
 
 
 @router.post("/predict", response_model=PredictionOut, status_code=status.HTTP_200_OK)

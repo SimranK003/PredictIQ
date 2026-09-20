@@ -1,0 +1,196 @@
+# PredictIQ — containerized local/dev stack.
+#
+# Mirrors the native setup documented in README.md's "Local setup"
+# section (Homebrew Postgres/Redis, a standalone MLflow server, a Celery
+# worker) but with every process in its own container, talking to each
+# other over the Compose network by service name instead of localhost.
+#
+# Quick start:
+#   cp .env.example .env
+#   docker compose up --build
+# See README.md's "Docker setup" section for the full walkthrough.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-predictiq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-predictiq}
+      POSTGRES_DB: ${POSTGRES_DB:-predictiq}
+      MLFLOW_DB_NAME: ${MLFLOW_DB_NAME:-mlflow}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh:ro
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-predictiq} -d ${POSTGRES_DB:-predictiq}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  mlflow:
+    build:
+      context: ./infra/mlflow
+    # Same Postgres server as the app, separate logical database (see
+    # infra/postgres/init-multi-db.sh) — chosen over a SQLite file so
+    # MLflow's own backend store gets real concurrent-writer guarantees
+    # in a multi-container deployment. Artifacts stay filesystem-based
+    # on a persistent volume; the MLflow server proxies artifact
+    # read/writes over HTTP (its default "serve-artifacts" behavior),
+    # so the backend/worker containers never need filesystem access to
+    # this volume themselves — only network access to this service.
+    # The actual `mlflow server ...` invocation lives in
+    # infra/mlflow/Dockerfile's CMD (shared with render.yaml's
+    # production deploy) — this just supplies the two env vars it
+    # reads. MLFLOW_ARTIFACT_ROOT is left unset here so the Dockerfile's
+    # own default (/mlartifacts, matching the volume mount below)
+    # applies; set it to an s3://bucket/prefix URI only if you want
+    # Compose to use object storage too (not needed for local dev).
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:-predictiq}@postgres:5432/${MLFLOW_DB_NAME:-mlflow}
+    volumes:
+      - mlflow_artifacts:/mlartifacts
+    ports:
+      - "${MLFLOW_HOST_PORT:-5001}:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  # One-shot: applies Alembic migrations, then exits. backend/worker both
+  # wait for this to complete successfully before starting, so the
+  # schema is never raced by two containers running `alembic upgrade
+  # head` at once, and startup never silently assumes a schema that
+  # isn't there yet.
+  migrate:
+    build:
+      context: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:-predictiq}@postgres:5432/${POSTGRES_DB:-predictiq}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:-predictiq}@postgres:5432/${POSTGRES_DB:-predictiq}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MLFLOW_TRACKING_URI: http://mlflow:5001
+      MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-predictiq-churn}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:3000}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-25}
+      DATASET_STORAGE_DIR: storage/datasets
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Auth (Phase 9) — see app/core/config.py and README's Docker
+      # setup section. SECRET_KEY must be overridden in .env for
+      # anything beyond a throwaway local instance; SESSION_COOKIE_SECURE
+      # must be "true" wherever this is actually served over HTTPS
+      # (false here because local Docker/dev is plain HTTP).
+      SECRET_KEY: ${SECRET_KEY:-dev-insecure-secret-key-change-me}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+    volumes:
+      - dataset_storage:/app/storage
+    ports:
+      - "${BACKEND_HOST_PORT:-8123}:8123"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+    # Linux's default "prefork" pool (unlike native macOS dev, which
+    # documents --pool=solo as a workaround for a fork-after-loading-
+    # XGBoost/libomp segfault specific to macOS's fork implementation —
+    # see README's Local setup section). No such issue on Linux, so the
+    # workaround is deliberately not carried into this image.
+    command: ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info"]
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:-predictiq}@postgres:5432/${POSTGRES_DB:-predictiq}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MLFLOW_TRACKING_URI: http://mlflow:5001
+      MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-predictiq-churn}
+      DATASET_STORAGE_DIR: storage/datasets
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      # Same named volume as backend, same mount path — the worker loads
+      # dataset CSVs from disk by the storage_path a dataset row recorded
+      # when the API received the upload (see
+      # app/services/training.py:load_dataset / app/services/ingestion.py).
+      - dataset_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A workers.celery_app inspect ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the browser bundle at build time — see
+        # frontend/Dockerfile's comment on NEXT_PUBLIC_API_BASE_URL.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8123}
+    ports:
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  mlflow_artifacts:
+  dataset_storage:

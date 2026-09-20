@@ -1,0 +1,276 @@
+# Render Blueprint (Infrastructure-as-Code) for PredictIQ's production
+# deployment — see README.md's "Production deployment" section for the
+# full walkthrough, architecture rationale, and everything this file
+# does NOT cover (secrets, which must be entered in Render's dashboard,
+# never committed here).
+#
+# Maps onto the same seven services docker-compose.yml already defines
+# (see that file) — same Dockerfiles, same images, different hosting
+# model: Render's managed Postgres/Key Value instead of the compose
+# file's postgres/redis containers, and each of frontend/backend/worker/
+# mlflow becomes its own Render service instead of a compose service.
+#
+# NOT deployed or verified against a real Render account as part of
+# building this file — no cloud credentials were available in the
+# environment this was authored in. This is STATICALLY authored
+# against Render's documented Blueprint schema (render.com/docs/
+# blueprint-spec, fetched and cross-checked while writing this file),
+# not exercised end-to-end. See README's Production deployment section
+# for the exact "verified locally / not verified in cloud" breakdown.
+#
+# Deploy: push this repo to GitHub, then in the Render dashboard choose
+# "New > Blueprint" and point it at the repo. Render parses this file
+# and prompts for every `sync: false` env var below before creating
+# anything.
+
+databases:
+  - name: predictiq-postgres
+    plan: 0.1c-256mb
+    diskSizeGB: 1
+    region: oregon
+    postgresMajorVersion: "16"
+    # Blocks the public internet entirely — only other services in this
+    # Blueprint (over Render's private network) can reach it. Required
+    # reading: "Do NOT expose PostgreSQL or Redis publicly" (see
+    # README's Production deployment / Security review section).
+    ipAllowList: []
+
+services:
+  # ---------------------------------------------------------------
+  # Redis (Celery broker/result-backend + session store) — private.
+  # ---------------------------------------------------------------
+  - name: predictiq-redis
+    type: keyvalue
+    plan: "256mb"
+    region: oregon
+    ipAllowList: []
+
+  # ---------------------------------------------------------------
+  # MLflow tracking server — private (pserv: no public URL at all).
+  # Backend and worker both reach it over Render's private network at
+  # http://predictiq-mlflow:5001 — a predicted literal value set on
+  # each of their MLFLOW_TRACKING_URI env vars below (see those
+  # comments for why this isn't a fromService reference). Artifacts
+  # persist on a dedicated Render disk
+  # (this service is never scaled beyond 1 instance and nothing else
+  # needs filesystem access to it — backend/worker only ever talk to it
+  # over HTTP, same as in docker-compose.yml), so no object-storage
+  # migration is needed here specifically, unlike dataset storage below.
+  # ---------------------------------------------------------------
+  - name: predictiq-mlflow
+    type: pserv
+    runtime: docker
+    dockerfilePath: infra/mlflow/Dockerfile
+    dockerContext: infra/mlflow
+    plan: 0.5c-512mb
+    region: oregon
+    disk:
+      name: mlflow-artifacts
+      mountPath: /mlartifacts
+      sizeGB: 5
+    # No dockerCommand override — infra/mlflow/Dockerfile's own CMD
+    # runs `mlflow server` using the env vars below (kept in one place
+    # so Compose and Render can't drift out of sync with each other;
+    # see that Dockerfile's comment). MLFLOW_ARTIFACT_ROOT is left unset
+    # so the Dockerfile's default (/mlartifacts) applies, matching the
+    # disk mounted above.
+    envVars:
+      - key: MLFLOW_BACKEND_STORE_URI
+        fromDatabase:
+          name: predictiq-postgres
+          property: connectionString
+    # No healthCheckPath — that field is web-services-only. Render
+    # still restarts a pserv container that exits; MLflow's own
+    # /health endpoint is used by backend/worker readiness, not Render.
+
+  # ---------------------------------------------------------------
+  # One-shot Alembic migration — see backend's preDeployCommand below
+  # instead. No separate migrate service/job is defined here: Render's
+  # preDeployCommand runs before every deploy of the service it's
+  # attached to (not just once), which is the direct Render-native
+  # equivalent of docker-compose.yml's one-shot `migrate` service.
+  # ---------------------------------------------------------------
+
+  # ---------------------------------------------------------------
+  # Backend API — public.
+  # ---------------------------------------------------------------
+  - name: predictiq-backend
+    type: web
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    plan: 0.5c-512mb
+    region: oregon
+    healthCheckPath: /health
+    # Runs on every deploy, before the new code starts serving — see
+    # README's "Database migration procedure" for why this is safe
+    # (Alembic only ever adds/alters, never drops-and-recreates) and
+    # what a bad migration's rollback looks like.
+    preDeployCommand: alembic upgrade head
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: predictiq-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: predictiq-redis
+          type: keyvalue
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: predictiq-redis
+          type: keyvalue
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        # Same value as CELERY_BROKER_URL — Render Key Value's
+        # connection string has no selectable db-index the way
+        # docker-compose.yml's redis://redis:6379/1 split does, so
+        # broker and result-backend share Redis db 0 in production.
+        # This is a deliberate, documented difference from native/
+        # Docker Compose dev (see README), not an oversight — sharing
+        # one logical Redis namespace for both is a completely
+        # standard Celery configuration.
+        fromService:
+          name: predictiq-redis
+          type: keyvalue
+          property: connectionString
+      - key: MLFLOW_TRACKING_URI
+        # Render's Blueprint spec has no string concatenation, so this
+        # can't be built from a fromService reference the way
+        # DATABASE_URL/REDIS_URL are (those need no added scheme
+        # prefix; a URL does). A service's private-network hostname is
+        # deterministically its `name:` field (confirmed via
+        # fromService's own `host` property, which returns exactly
+        # this) — so this is a predicted literal, not a guess: verify
+        # it after first deploy in the predictiq-mlflow service's
+        # "Connect" tab, or with `echo $MLFLOW_TRACKING_URI` from a
+        # Render shell on predictiq-backend.
+        value: http://predictiq-mlflow:5001
+      - key: MLFLOW_EXPERIMENT_NAME
+        value: predictiq-churn
+      - key: API_CORS_ORIGINS
+        # Update to the frontend's actual URL if you rename the
+        # service or attach a custom domain — see README.
+        value: https://predictiq-frontend.onrender.com
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "25"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: WEB_CONCURRENCY
+        value: "2"
+      # --- Dataset storage: S3-compatible object storage, not a
+      # Render disk — see app/services/dataset_storage.py and README's
+      # "File storage" section for why (backend and worker are
+      # separate Render services with no shared disk). ---
+      - key: DATASET_STORAGE_BACKEND
+        value: s3
+      - key: DATASET_STORAGE_S3_BUCKET
+        sync: false
+      - key: DATASET_STORAGE_S3_PREFIX
+        value: datasets
+      - key: DATASET_STORAGE_S3_REGION
+        sync: false
+      - key: DATASET_STORAGE_S3_ENDPOINT_URL
+        sync: false # leave unset for real AWS S3; set for R2/MinIO
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      # --- Auth (Phase 9) ---
+      - key: SECRET_KEY
+        sync: false # generate with: python -c "import secrets; print(secrets.token_hex(32))"
+      - key: SESSION_COOKIE_SECURE
+        value: "true" # Render terminates TLS for every web service — see README
+      - key: SESSION_COOKIE_SAMESITE
+        value: lax
+      # Safe here specifically because Render always proxies every
+      # request through its own edge — the backend is unreachable
+      # except via that proxy, which sets X-Forwarded-For to the real
+      # client IP. See app/routers/auth.py's _client_identifier and
+      # app/core/config.py's trust_proxy_headers docstrings before
+      # setting this true anywhere else.
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+
+  # ---------------------------------------------------------------
+  # Celery worker — private (type: worker has no public URL at all,
+  # same image as backend, different command).
+  # ---------------------------------------------------------------
+  - name: predictiq-worker
+    type: worker
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    dockerCommand: celery -A workers.celery_app worker --loglevel=info --concurrency=2
+    plan: 0.5c-512mb
+    region: oregon
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: predictiq-postgres
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: predictiq-redis
+          type: keyvalue
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          name: predictiq-redis
+          type: keyvalue
+          property: connectionString
+      - key: MLFLOW_TRACKING_URI
+        # Same predicted private-network URL as predictiq-backend's —
+        # see that service's MLFLOW_TRACKING_URI comment above. Backend
+        # and worker MUST resolve the same MLflow server (this is
+        # exactly the Phase 4 bug app/core/mlflow_config.py's
+        # assert_mlflow_configured() exists to catch) — keep these two
+        # values identical.
+        value: http://predictiq-mlflow:5001
+      - key: MLFLOW_EXPERIMENT_NAME
+        value: predictiq-churn
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATASET_STORAGE_BACKEND
+        value: s3
+      - key: DATASET_STORAGE_S3_BUCKET
+        sync: false
+      - key: DATASET_STORAGE_S3_PREFIX
+        value: datasets
+      - key: DATASET_STORAGE_S3_REGION
+        sync: false
+      - key: DATASET_STORAGE_S3_ENDPOINT_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+
+  # ---------------------------------------------------------------
+  # Frontend — public.
+  # ---------------------------------------------------------------
+  - name: predictiq-frontend
+    type: web
+    runtime: docker
+    dockerfilePath: frontend/Dockerfile
+    dockerContext: frontend
+    plan: 0.5c-512mb
+    region: oregon
+    healthCheckPath: /
+    envVars:
+      # Baked into the browser bundle at *build* time (Render
+      # auto-translates service envVars into Docker build ARGs — see
+      # frontend/Dockerfile's ARG NEXT_PUBLIC_API_BASE_URL). This must
+      # be the backend's real public URL, predicted here from its
+      # `name:` above (predictiq-backend -> predictiq-backend.onrender.com).
+      # If you rename that service or attach a custom domain, update
+      # this value AND manually redeploy the frontend — changing an
+      # env var alone does not rebuild the already-baked JS bundle.
+      # See README's Production deployment section.
+      - key: NEXT_PUBLIC_API_BASE_URL
+        value: https://predictiq-backend.onrender.com

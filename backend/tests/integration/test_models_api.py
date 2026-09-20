@@ -1,22 +1,9 @@
 """API tests for the model registry endpoints."""
 
-import pytest
-
-from app.core.config import get_settings
 from db.models import ModelStage
 
-
-@pytest.fixture()
-def disable_artifact_check(monkeypatch):
-    """Exercise the real promote_model end-to-end through the API without
-    a live MLflow server, using the actual documented policy toggle
-    (MODEL_PROMOTION_REQUIRE_ARTIFACT_CHECK) rather than stubbing the
-    registry function itself.
-    """
-    monkeypatch.setenv("MODEL_PROMOTION_REQUIRE_ARTIFACT_CHECK", "false")
-    get_settings.cache_clear()
-    yield
-    get_settings.cache_clear()
+# disable_artifact_check is defined in tests/conftest.py (shared with
+# tests/integration/test_auth_api.py's own promote/rollback coverage).
 
 
 def test_list_models_empty(client):

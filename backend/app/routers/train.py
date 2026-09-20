@@ -22,11 +22,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
+from app.core.security import get_current_user
 from app.schemas.train import TrainRequest, TrainResponse
 from db.models import Dataset, Job, JobStatus, JobType
 from db.session import get_db
 
-router = APIRouter(tags=["training"])
+# Training only ever produces *candidates* (see app/services/registry.py) —
+# it never touches production on its own, so any authenticated user may
+# submit a job. Promotion/rollback (app/routers/models.py), which do
+# affect production, are admin-only.
+router = APIRouter(tags=["training"], dependencies=[Depends(get_current_user)])
 logger = get_logger(__name__)
 
 _ACTIVE_STATUSES = (JobStatus.QUEUED, JobStatus.RUNNING)

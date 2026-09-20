@@ -18,7 +18,6 @@ or a config that makes XGBoost blow up would just fail again identically.
 
 import hashlib
 from datetime import UTC, datetime
-from pathlib import Path
 
 import requests
 from sqlalchemy.exc import OperationalError
@@ -26,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import PredictIQError
 from app.core.logging import get_logger
+from app.services.dataset_storage import dataset_file_exists, read_dataset_bytes
 from db.models import Dataset, Job, JobStatus, ModelVersionRecord
 from ml.training.config import TrainingConfig
 from ml.training.models import ALGORITHMS
@@ -58,11 +58,10 @@ def _verify_dataset_for_training(db: Session, dataset_id) -> Dataset:
             "for training."
         )
 
-    path = Path(dataset.storage_path)
-    if not path.exists():
-        raise TrainingExecutionError(f"Dataset file is missing on disk: {dataset.storage_path}")
+    if not dataset_file_exists(dataset.storage_path):
+        raise TrainingExecutionError(f"Dataset file is missing: {dataset.storage_path}")
 
-    actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    actual_hash = hashlib.sha256(read_dataset_bytes(dataset.storage_path)).hexdigest()
     if actual_hash != dataset.content_hash:
         raise TrainingExecutionError(
             f"Dataset {dataset_id} content hash mismatch: recorded {dataset.content_hash}, "

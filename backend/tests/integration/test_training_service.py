@@ -200,7 +200,7 @@ def test_execute_training_job_marks_failed_for_missing_file_on_disk(
         session.refresh(job)
 
         assert job.status == JobStatus.FAILED
-        assert "missing on disk" in job.error_message
+        assert "Dataset file is missing" in job.error_message
     finally:
         cleanup_training_artifacts(session, job_id=job.id, dataset_id=dataset.id)
 

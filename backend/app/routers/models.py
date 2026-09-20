@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import InvalidPromotionError, NotFoundError, PromotionConflictError
+from app.core.security import get_current_user, require_admin
 from app.schemas.model import (
     ModelMetricsOut,
     ModelVersionOut,
@@ -14,10 +15,14 @@ from app.schemas.model import (
 )
 from app.services.model_loader import invalidate_production_model_cache
 from app.services.registry import get_production_model, promote_model, rollback_model
-from db.models import ModelStage, ModelVersionRecord
+from db.models import ModelStage, ModelVersionRecord, User
 from db.session import get_db
 
-router = APIRouter(prefix="/models", tags=["models"])
+# Read endpoints require any authenticated session (dependencies=[...]
+# below); promote/rollback additionally require require_admin (see each
+# route) since they're the two actions that actually change what's
+# serving production traffic.
+router = APIRouter(prefix="/models", tags=["models"], dependencies=[Depends(get_current_user)])
 
 
 @router.get("", response_model=list[ModelVersionSummaryOut])
@@ -62,9 +67,13 @@ def get_model_metrics(model_id: uuid.UUID, db: Session = Depends(get_db)) -> Mod
 
 
 @router.post("/promote", response_model=ModelVersionOut, status_code=status.HTTP_200_OK)
-def promote(request: PromoteRequest, db: Session = Depends(get_db)) -> ModelVersionRecord:
+def promote(
+    request: PromoteRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> ModelVersionRecord:
     try:
-        promoted = promote_model(db, request.candidate_id, triggered_by="api")
+        promoted = promote_model(db, request.candidate_id, triggered_by=admin.email)
     except NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except InvalidPromotionError as exc:
@@ -82,9 +91,12 @@ def promote(request: PromoteRequest, db: Session = Depends(get_db)) -> ModelVers
 
 
 @router.post("/rollback", response_model=ModelVersionOut, status_code=status.HTTP_200_OK)
-def rollback(db: Session = Depends(get_db)) -> ModelVersionRecord:
+def rollback(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> ModelVersionRecord:
     try:
-        restored = rollback_model(db, triggered_by="api")
+        restored = rollback_model(db, triggered_by=admin.email)
     except InvalidPromotionError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

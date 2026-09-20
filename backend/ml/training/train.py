@@ -27,13 +27,14 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import configure_logging, get_logger
 from app.core.mlflow_config import configure_mlflow
+from app.services.dataset_storage import read_dataset_dataframe
 from app.services.registry import register_candidate
 from db.models import Dataset, ModelVersionRecord
 from db.session import SessionLocal
 from ml.preprocessing import build_full_pipeline
 from ml.schema import CHURN_SCHEMA, DatasetSchema
 from ml.training.config import TrainingConfig, load_training_config
-from ml.training.data import load_raw_dataframe, prepare_features_and_target, split_dataset
+from ml.training.data import prepare_features_and_target, split_dataset
 from ml.training.evaluate import evaluate_predictions, flatten_metrics_for_mlflow
 from ml.training.models import ALGORITHMS, build_classifier, hyperparams_for
 
@@ -210,7 +211,7 @@ def train_and_register(
     """
     configure_mlflow()
 
-    df = load_raw_dataframe(dataset.storage_path)
+    df = read_dataset_dataframe(dataset.storage_path)
     results = run_training_pipeline(df, schema, config, algorithms=algorithms)
 
     sample_input = df[list(schema.all_feature_columns)].head(3)

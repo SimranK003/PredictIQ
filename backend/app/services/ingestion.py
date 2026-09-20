@@ -23,6 +23,7 @@ from app.core.exceptions import (
     UnsupportedFileTypeError,
 )
 from app.core.logging import get_logger
+from app.services.dataset_storage import save_dataset_bytes
 from db.models import Dataset
 from ml.schema import CHURN_SCHEMA, DatasetSchema
 from ml.validation import validate_dataset
@@ -30,12 +31,6 @@ from ml.validation import validate_dataset
 logger = get_logger(__name__)
 
 ALLOWED_EXTENSIONS = {".csv"}
-
-
-def _storage_dir() -> Path:
-    path = Path(get_settings().dataset_storage_dir)
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def ingest_csv_upload(
@@ -57,18 +52,17 @@ def ingest_csv_upload(
     report = validate_dataset(df, schema)
 
     dataset_id = uuid.uuid4()
-    storage_path = _storage_dir() / f"{dataset_id}.csv"
 
     # Persist the raw file regardless of validity so a rejected upload can
     # still be inspected/debugged, but only via the quality report — we
     # don't silently proceed to training with it.
-    storage_path.write_bytes(raw_bytes)
+    storage_path = save_dataset_bytes(dataset_id, raw_bytes)
 
     dataset = Dataset(
         id=dataset_id,
         filename=filename,
         schema_name=schema.name,
-        storage_path=str(storage_path),
+        storage_path=storage_path,
         content_hash=hashlib.sha256(raw_bytes).hexdigest(),
         n_rows=report.n_rows,
         n_columns=report.n_columns,

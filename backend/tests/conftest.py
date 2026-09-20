@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
-from db.models import Dataset, ModelStage, ModelVersionRecord
+from db.models import Dataset, ModelStage, ModelVersionRecord, User
 from db.session import SessionLocal, engine
 
 
@@ -347,7 +347,34 @@ def make_predictions(db_session):
 
 
 @pytest.fixture()
-def client(db_session, storage_dir) -> TestClient:
+def make_user(db_session):
+    """Factory for a real User row with a real Argon2 hash — auth tests
+    (and the client/non_admin_client fixtures below) log in for real
+    against this row rather than mocking authentication, consistent with
+    how the rest of this suite exercises real Postgres/Redis behavior.
+    """
+
+    def _make(
+        *,
+        email: str | None = None,
+        password: str = "correct-horse-battery-staple",
+        is_admin: bool = False,
+    ) -> tuple[User, str]:
+        from app.core.security import hash_password
+
+        user = User(
+            email=(email or f"user-{uuid.uuid4().hex[:8]}@test.local").lower(),
+            hashed_password=hash_password(password),
+            is_admin=is_admin,
+        )
+        db_session.add(user)
+        db_session.flush()
+        return user, password
+
+    return _make
+
+
+def _build_test_client(db_session, storage_dir) -> TestClient:
     from app.main import app
     from db.session import get_db
 
@@ -355,6 +382,68 @@ def client(db_session, storage_dir) -> TestClient:
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
-    with TestClient(app) as test_client:
-        yield test_client
+    test_client = TestClient(app)
+    test_client.__enter__()
+    return test_client
+
+
+def _teardown_test_client(test_client: TestClient) -> None:
+    from app.main import app
+
+    test_client.post("/auth/logout")
+    test_client.__exit__(None, None, None)
     app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def client(db_session, storage_dir, make_user) -> TestClient:
+    """The default authenticated test client — logged in as a real admin
+    user. Admin is the default (rather than a plain user) so every
+    existing test exercising business logic (including promote/rollback)
+    keeps working unchanged: admin is a strict superset of what a
+    regular user can do. Non-admin-specific and unauthenticated-specific
+    behavior gets its own dedicated fixtures below rather than living
+    here.
+    """
+    test_client = _build_test_client(db_session, storage_dir)
+    user, password = make_user(email="admin@test.local", is_admin=True)
+    resp = test_client.post("/auth/login", json={"email": user.email, "password": password})
+    assert resp.status_code == 200, resp.text
+    yield test_client
+    _teardown_test_client(test_client)
+
+
+@pytest.fixture()
+def non_admin_client(db_session, storage_dir, make_user) -> TestClient:
+    """Authenticated as a real, non-admin user — for tests proving
+    admin-only endpoints reject a logged-in-but-unprivileged caller.
+    """
+    test_client = _build_test_client(db_session, storage_dir)
+    user, password = make_user(email="member@test.local", is_admin=False)
+    resp = test_client.post("/auth/login", json={"email": user.email, "password": password})
+    assert resp.status_code == 200, resp.text
+    yield test_client
+    _teardown_test_client(test_client)
+
+
+@pytest.fixture()
+def disable_artifact_check(monkeypatch):
+    """Exercise the real promote_model end-to-end through the API without
+    a live MLflow server, using the actual documented policy toggle
+    (MODEL_PROMOTION_REQUIRE_ARTIFACT_CHECK) rather than stubbing the
+    registry function itself.
+    """
+    monkeypatch.setenv("MODEL_PROMOTION_REQUIRE_ARTIFACT_CHECK", "false")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture()
+def anonymous_client(db_session, storage_dir) -> TestClient:
+    """No login at all — for tests proving protected endpoints reject an
+    unauthenticated request.
+    """
+    test_client = _build_test_client(db_session, storage_dir)
+    yield test_client
+    _teardown_test_client(test_client)

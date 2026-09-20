@@ -92,7 +92,10 @@ def test_predict_database_failure_returns_clean_500_without_traceback(
     real bugs — that's not what we're checking here. We want to verify
     the *response our handler produces*, so this test builds its own
     client (reusing the same app + dependency overrides the `client`
-    fixture already configured) with that behavior turned off.
+    fixture already configured) with that behavior turned off, carrying
+    over `client`'s already-authenticated session cookie so this hits
+    the real code path under test (a DB failure) rather than 401ing on
+    auth before ever reaching it.
     """
     from starlette.testclient import TestClient
 
@@ -107,6 +110,7 @@ def test_predict_database_failure_returns_clean_500_without_traceback(
     monkeypatch.setattr("sqlalchemy.orm.Session.commit", _raise)
 
     lenient_client = TestClient(app, raise_server_exceptions=False)
+    lenient_client.cookies = client.cookies
     resp = lenient_client.post("/predict", json=sample_churn_features())
 
     assert resp.status_code == 500
