@@ -33,3 +33,10 @@ class JobOut(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+
+
+class PaginatedJobsOut(BaseModel):
+    items: list[JobOut]
+    total: int
+    limit: int
+    offset: int

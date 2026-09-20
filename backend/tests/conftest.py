@@ -149,6 +149,7 @@ def make_model_version(db_session, make_dataset):
             ),
             params=overrides.get("params", {"C": 1.0}),
             dataset_id=ds.id,
+            training_job_id=overrides.get("training_job_id"),
         )
         db_session.add(model_version)
         db_session.flush()
