@@ -33,8 +33,18 @@ def test_health_is_ok_when_production_model_registered(client, make_model_versio
 
 
 def test_health_never_leaks_connection_details(client):
+    from app.core.config import get_settings
+
     resp = client.get("/health")
     body_text = resp.text.lower()
     assert "postgresql://" not in body_text
     assert "password" not in body_text
-    assert "predictiq:REDACTED-ROTATE-THIS-CREDENTIAL" not in body_text
+
+    # Check against the *actual* configured credential rather than a
+    # hardcoded string, so this keeps testing something real even if
+    # the local test database's credential ever changes (see
+    # tests/conftest.py) instead of silently going stale.
+    db_url = get_settings().database_url
+    if "://" in db_url and "@" in db_url:
+        credentials_part = db_url.split("://", 1)[1].split("@", 1)[0]
+        assert credentials_part.lower() not in body_text

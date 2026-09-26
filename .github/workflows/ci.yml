@@ -19,6 +19,14 @@ jobs:
     name: Backend tests + lint
     runs-on: ubuntu-latest
     services:
+      # POSTGRES_PASSWORD comes from a repo secret, not a literal value —
+      # this container only ever exists for this one job run's isolated
+      # network and is destroyed immediately after, so it's not a
+      # "real" credential in the usual sense, but this repo doesn't
+      # hardcode password-shaped strings anywhere, CI included. Add a
+      # CI_POSTGRES_PASSWORD repository secret (Settings > Secrets and
+      # variables > Actions) — any value works, it just has to be set —
+      # before this job will run.
       postgres:
         image: postgres:16-alpine
         env:
@@ -67,12 +75,12 @@ jobs:
       # (see README's Testing section on why tests hit a real database).
       - name: Apply Alembic migrations
         env:
-          DATABASE_URL: postgresql+psycopg2://predictiq:REDACTED-ROTATE-THIS-CREDENTIAL@localhost:5432/predictiq_test
+          DATABASE_URL: postgresql+psycopg2://predictiq:${{ secrets.CI_POSTGRES_PASSWORD }}@localhost:5432/predictiq_test
         run: alembic upgrade head
 
       - name: Run tests
         env:
-          DATABASE_URL: postgresql+psycopg2://predictiq:REDACTED-ROTATE-THIS-CREDENTIAL@localhost:5432/predictiq_test
+          DATABASE_URL: postgresql+psycopg2://predictiq:${{ secrets.CI_POSTGRES_PASSWORD }}@localhost:5432/predictiq_test
           REDIS_URL: redis://localhost:6379/0
         run: pytest
 

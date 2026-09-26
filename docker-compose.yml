@@ -15,7 +15,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-predictiq}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file - see .env.example}
       POSTGRES_DB: ${POSTGRES_DB:-predictiq}
       MLFLOW_DB_NAME: ${MLFLOW_DB_NAME:-mlflow}
     volumes:
@@ -62,7 +62,7 @@ services:
     # applies; set it to an s3://bucket/prefix URI only if you want
     # Compose to use object storage too (not needed for local dev).
     environment:
-      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}@postgres:5432/${MLFLOW_DB_NAME:-mlflow}
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file - see .env.example}@postgres:5432/${MLFLOW_DB_NAME:-mlflow}
     volumes:
       - mlflow_artifacts:/mlartifacts
     ports:
@@ -89,7 +89,7 @@ services:
     command: ["alembic", "upgrade", "head"]
     environment:
       ENVIRONMENT: production
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}@postgres:5432/${POSTGRES_DB:-predictiq}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file - see .env.example}@postgres:5432/${POSTGRES_DB:-predictiq}
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,7 +102,7 @@ services:
       context: ./backend
     environment:
       ENVIRONMENT: production
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}@postgres:5432/${POSTGRES_DB:-predictiq}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file - see .env.example}@postgres:5432/${POSTGRES_DB:-predictiq}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
@@ -145,7 +145,7 @@ services:
     command: ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info"]
     environment:
       ENVIRONMENT: production
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}@postgres:5432/${POSTGRES_DB:-predictiq}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-predictiq}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file - see .env.example}@postgres:5432/${POSTGRES_DB:-predictiq}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1

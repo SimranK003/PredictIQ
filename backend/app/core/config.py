@@ -16,8 +16,14 @@ class Settings(BaseSettings):
 
     environment: str = "development"
 
-    # Database
-    database_url: str = "postgresql+psycopg2://predictiq:REDACTED-ROTATE-THIS-CREDENTIAL@localhost:5432/predictiq"
+    # Database. Deliberately no default: a hardcoded connection string
+    # here would mean a real (if only locally-scoped) credential baked
+    # into source control, and a fallback that "just happens to work"
+    # against whatever the developer's Postgres role is actually named.
+    # Every environment (native dev via .env, Docker Compose, tests,
+    # CI, Render in production) supplies this explicitly instead — see
+    # .env.example for the native-dev template.
+    database_url: str
 
     # Redis / Celery
     redis_url: str = "redis://localhost:6379/0"

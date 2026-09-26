@@ -601,7 +601,7 @@ etc).
 | Frontend | http://localhost:3000 |
 | Backend API / docs | http://localhost:8123 (`/docs` for Swagger UI) |
 | MLflow UI | http://localhost:5001 |
-| Postgres | `localhost:5432` (`psql`/GUI client, e.g. `psql postgresql://predictiq:REDACTED-ROTATE-THIS-CREDENTIAL@localhost:5432/predictiq`) |
+| Postgres | `localhost:5432` (`psql`/GUI client, e.g. `psql postgresql://predictiq:<your POSTGRES_PASSWORD from .env>@localhost:5432/predictiq`) |
 | Redis | `localhost:6379` (`redis-cli -p 6379`) |
 
 Postgres and Redis are published to the host only for local developer
@@ -661,7 +661,7 @@ Redis by using the host-published ports:
 
 ```bash
 # Backend, from backend/ with the project's virtualenv active
-DATABASE_URL=postgresql+psycopg2://predictiq:REDACTED-ROTATE-THIS-CREDENTIAL@localhost:5432/predictiq \
+DATABASE_URL=postgresql+psycopg2://predictiq:<your POSTGRES_PASSWORD from .env>@localhost:5432/predictiq \
 REDIS_URL=redis://localhost:6379/0 \
 pytest
 

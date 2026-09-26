@@ -13,8 +13,17 @@ import hashlib
 import os
 import uuid
 
+# Local-only convenience default so `pytest` works out of the box against
+# a throwaway local Postgres test database (predictiq_test) without
+# requiring DATABASE_URL to be exported first. Never used against any
+# shared/remote system — override via TEST_DB_PASSWORD (or just export a
+# real DATABASE_URL yourself, which this setdefault() then never touches)
+# if your local Postgres role's password differs.
 os.environ.setdefault(
-    "DATABASE_URL", "postgresql+psycopg2://predictiq:REDACTED-ROTATE-THIS-CREDENTIAL@localhost:5432/predictiq_test"
+    "DATABASE_URL",
+    "postgresql+psycopg2://predictiq:{}@localhost:5432/predictiq_test".format(
+        os.environ.get("TEST_DB_PASSWORD", "predictiq-local-test-only")
+    ),
 )
 os.environ["ENVIRONMENT"] = "test"
 
